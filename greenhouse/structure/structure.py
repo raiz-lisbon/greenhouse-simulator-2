@@ -2,9 +2,8 @@ import sys
 from pysolar import solar
 from datetime import datetime, timezone
 
-sys.path.insert(0, '../..')
-from deps.types import *
-from math_helpers import *
+from helpers.types import *
+from helpers.math_helpers import *
 
 
 # =============================================================================================================================================================
