@@ -1,5 +1,5 @@
 import math
-from deps.types import *
+from helpers.types import *
 
 
 def sin(angle: deg):

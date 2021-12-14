@@ -32,6 +32,7 @@ kWh = NewType('kWh', float)
 l = NewType('liters', float)
 
 # Amount of substance
+umol = NewType('micro mole', float)
 mol = NewType('mole', float)
 
 # Enthalpy
@@ -77,6 +78,7 @@ W_per_m2 = NewType('W / m2', float)
 
 # Photon flux
 mol_per_m2 = NewType('mol / m2', float)
+umol_per_m2 = NewType('umol / m2', float)
 mol_per_m2_s = NewType('mol / m2 * s', float)
 mol_per_m2_hours = NewType('mol / m2 * hour', float)
 mol_per_m2_day = NewType('mol / m2 * day', float)
