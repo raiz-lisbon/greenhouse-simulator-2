@@ -61,6 +61,7 @@ m3_per_mol = NewType('m3 / mol', float)
 RH = NewType('RH%', float)
 g_per_m3 = NewType('g / m3', float)
 kg_H2O_per_kg_air = NewType('kg water vapor / kg air', float)
+kg_H2O_per_kg_air_per_s = NewType('kg_H2O_per_kg_air_per_s', float)
 
 # Density
 kg_per_l = NewType('kg / l', float) # liquids
@@ -124,6 +125,9 @@ ppm_per_s = NewType('ppm / s', float)
 
 # Humidity change
 RH_per_s = NewType('RH / s', float)
+
+# Temp change
+C_per_s = NewType('C / s', float)
 
 # Daily Light Integral
 mol_per_m2_day = NewType('mol / m2 * day', float)

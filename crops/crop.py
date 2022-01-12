@@ -3,6 +3,7 @@ import numpy as np
 
 from helpers.types import *
 from helpers.conversions import *
+from helpers.solar_conversions import *
 
 
 
@@ -66,7 +67,6 @@ class Crop:
         specific_photosynthetic_rate: umol_per_m2_s = self._get_specific_photosynthetic_rate(dli)
         photosynthetic_rate: umol_per_s = specific_photosynthetic_rate * self.total_leaf_area
         CO2_assimilation_rate: mol_per_s = photosynthetic_rate / 1e6
-        print(CO2_assimilation_rate)
         CO2_assimilated: mol = CO2_assimilation_rate * self.time_period 
 
         return CO2_assimilation_rate, CO2_assimilated
