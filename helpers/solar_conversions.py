@@ -20,8 +20,10 @@ def projected_DLI_to_PPFD(dli: mol_per_m2_day, photoperiod: h) -> umol_per_m2_s:
 
     return PAR_photon_amount / 1e-6
 
+
 def PAR_amount_to_projected_DLI(PAR_photon_amount: mol_per_m2, time_period: s, photoperiod: h) -> mol_per_m2_day:
     return PAR_photon_amount * (photoperiod * 3600 / time_period)
+
 
 def projected_DLI_to_PAR_amount(projected_DLI: mol_per_m2_day, time_period: s) -> mol_per_m2:
     return (projected_DLI * time_period) / (photoperiod * 3600)
