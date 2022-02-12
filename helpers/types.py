@@ -150,3 +150,6 @@ EUR_per_kg = NewType('Euros / kg', float)
 
 # Speed
 km_per_h = NewType('km / h', float)
+
+# Fan energy usage
+J_per_m3 = NewType('J / m3', float)

@@ -1,4 +1,5 @@
 import psychrolib
+from scipy.ndimage.filters import uniform_filter1d
 
 import sys
 sys.path.insert(0, '/work/greenhouse-simulator-2/')
@@ -15,19 +16,29 @@ air_density: kg_per_m3 = 1.1839 # TODO: take humidity into account with psychrol
 water_evaporation_heat: J_per_g = 2501
 
 
-def get_airflow(rel_humidity: RH, ambient_humidity_at_inside_temp: RH, temp: C, ambient_data) -> m3_per_s:
-    hum_airflow: m3_per_s = abs(rel_humidity - 70) * 0.1
-    temp_airflow: m3_per_s = abs(temp - 25) * 0.1
+def get_airflow(airflow_mode, rel_humidity: RH, ambient_humidity_at_inside_temp: RH, temp: C, ambient_data, control_register, prev_airflows_at_t_steps) -> m3_per_s:
+    if ":" in airflow_mode:
+        assert airflow_mode.split(":")[0] == "CONST" and float(airflow_mode.split(":")[1]) >= 0, f"CONST airflow mode '{airflow_mode} is not valid."
+    else:
+        assert airflow_mode in ["humidity_control"], f"Airflow mode '{airflow_mode} is not supported."
 
-    if ambient_humidity_at_inside_temp >= 80:
-        return 0
+    airflow_offset: m3_per_s = 0
 
-    airflow_offset: m3_per_s = max(hum_airflow, temp_airflow)
+    if airflow_mode == "humidity_control":
+        hum_airflow: m3_per_s = abs(rel_humidity - 70) * 1
+        airflow_offset = hum_airflow
+    elif "CONST" in airflow_mode:
+        airflow_offset = float(airflow_mode.split(":")[1])
 
     if airflow_offset < 0:
         airflow_offset = 0
 
-    return 0.1 + airflow_offset
+    if airflow_offset > 1.95:
+        airflow_offset = 1.95
+
+    new_airflow = 0 + airflow_offset
+
+    return new_airflow
 
 
 def derive_H2O(airflow: m3_per_s, humidity_ratio: kg_H2O_per_kg_air, ambient_humidity_ratio: kg_H2O_per_kg_air, humidity: RH, temp: C, input_values) -> RH_per_s:
@@ -38,34 +49,27 @@ def derive_H2O(airflow: m3_per_s, humidity_ratio: kg_H2O_per_kg_air, ambient_hum
     # Get mass air inflow
     mass_airflow: kg_per_s = air_density * airflow
 
-    # Define dehumidification rate
-    dehum_rate: g_per_s = 0
-
-    if airflow == 0:
-        dehum_factor = 1 + (humidity - 70) * 0.1
-        dehum_rate = H2O_mass_evaporation_rate * dehum_factor
-        water_content_change_rate: g_per_s = H2O_mass_evaporation_rate - dehum_rate
+    if humidity > 70:
+        dehum_rate = (humidity - 70) * 0.2
     else:
-        H2O_inflow: g_per_s = ambient_humidity_ratio * mass_airflow * 1000
-        H2O_outflow: g_per_s = humidity_ratio * mass_airflow * 1000
-        water_content_change_rate: g_per_s = H2O_inflow - H2O_outflow + H2O_mass_evaporation_rate - dehum_rate
+        dehum_rate = 0
+
+    H2O_inflow: g_per_s = ambient_humidity_ratio * mass_airflow * 1000
+    H2O_outflow: g_per_s = humidity_ratio * mass_airflow * 1000
+    water_content_change_rate: g_per_s = H2O_inflow - H2O_outflow + H2O_mass_evaporation_rate - dehum_rate
 
     humidity_ratio_change_rate: kg_H2O_per_kg_air_per_s = water_content_change_rate / 1000 / structure_volume * air_density
 
     return humidity_ratio_change_rate, dehum_rate
 
 
-def derive_temp(airflow: m3_per_s, humidity: RH, temp: C, input_values, dehum_rate: g_per_s) -> C_per_s:
+def derive_temp(airflow: m3_per_s, humidity: RH, temp: C, input_values, dehum_rate: g_per_s, heating_rate: J_per_s) -> C_per_s:
     # Unpack input values
     ambient_temp = input_values["ambient_data"]["temp"]
     ambient_humidity = input_values["ambient_data"]["humidity"]
     H2O_mass_evaporation_rate = input_values["H2O_mass_evaporation_rate"]
     power_irradiated = input_values["power_irradiated"]
     get_heat_transfer_rate = input_values["get_heat_transfer_rate"]
-
-    # To avoid psychrolib errors
-    if humidity > 100:
-        humidity = 100
 
     mass_airflow: kg_per_s = air_density * airflow
 
@@ -89,14 +93,9 @@ def derive_temp(airflow: m3_per_s, humidity: RH, temp: C, input_values, dehum_ra
     condensation_heating_rate: J_per_s = water_evaporation_heat * dehum_rate
 
     # Net enthalpy change of air
-    enthalpy_change_rate: J_per_s = enthalpy_of_airflow_in - enthalpy_of_airflow_out + enthalpy_absorbed_by_air - conductive_enthalpy_loss + condensation_heating_rate
+    enthalpy_change_rate: J_per_s = enthalpy_of_airflow_in - enthalpy_of_airflow_out + enthalpy_absorbed_by_air - conductive_enthalpy_loss + condensation_heating_rate + heating_rate
 
-    new_heating_rate: J_per_s = 0
-    # if airflow == 0 and enthalpy_change_rate > 0 and temp >= self.target_temp[1]:
-    #     new_heating_rate: J_per_s = enthalpy_change_rate
-    #     enthalpy_change_rate: J_per_s = 0
-
-    return enthalpy_change_rate, new_heating_rate
+    return enthalpy_change_rate, heating_rate
 
 
 def derive_CO2(airflow, CO2_concentration: ppm, input_values):
@@ -117,16 +116,36 @@ def derive_CO2(airflow, CO2_concentration: ppm, input_values):
     return net_change_concentration, CO2_release_rate
 
 
-def airflow_model(t, y, t_max, input_values, control_register):
+def airflow_model(t, y, t_max, input_values, control_register, prev_airflows_at_t_steps, airflow_mode, max_temp):
     # Destructure y values (== measured variables)
     humidity_ratio, temp, CO2_concentration = y
 
-    if temp > 200:
-        temp = 200
+    # To avoid psychrolib errors
+    if humidity_ratio < 0:
+        print("Humidity ratio under limit", humidity_ratio)
+        humidity_ratio = 0
+
     if temp < -100:
+        print("Temp under limit", temp)
         temp = -100
-        
+    if temp > 200:
+        print("Temp over limit", temp)
+        temp = 200
+
+
     humidity = psychrolib.GetRelHumFromHumRatio(temp, humidity_ratio, pressure) * 100
+
+    # To avoid psychrolib errors
+    if humidity > 100:
+        print("Humidity over limit", humidity)
+        humidity = 100
+
+    # Define control signals
+    if temp > max_temp:
+        heating_rate: J_per_s = (temp - max_temp) * -2300
+    else:
+        heating_rate: J_per_s = (max_temp - temp) * 2000
+
 
     # Get ambient humidity ratio and rel humidity at inside temp
     ambient_temp: C = input_values["ambient_data"]["temp"]
@@ -135,15 +154,12 @@ def airflow_model(t, y, t_max, input_values, control_register):
     ambient_humidity_at_inside_temp: RH = psychrolib.GetRelHumFromHumRatio(temp, ambient_humidity_ratio, pressure) * 100
 
     # Determine airflow
-    airflow: m3_per_s = get_airflow(humidity, ambient_humidity_at_inside_temp, temp, input_values["ambient_data"])
+    airflow = get_airflow(airflow_mode, humidity, ambient_humidity_at_inside_temp, temp, input_values["ambient_data"], control_register, prev_airflows_at_t_steps)
 
     # Calculate change rate of measured variables
     humidity_ratio_change_rate, dehum_rate = derive_H2O(airflow, humidity_ratio, ambient_humidity_ratio, humidity, temp, input_values)
-    temp_change_rate, heating_rate = derive_temp(airflow, humidity, temp, input_values, dehum_rate)
+    temp_change_rate, heating_rate = derive_temp(airflow, humidity, temp, input_values, dehum_rate, heating_rate)
     CO2_concentration_change_rate, CO2_release_rate = derive_CO2(airflow, CO2_concentration, input_values)
-
-    if airflow < 0:
-        print(airflow)
 
     # Avoid duplicates to ensure strictly monotonically increasing list as it is a requirement of InterpolatedUnivariateSpline
     if t not in [x["t"] for x in control_register]: 
@@ -153,7 +169,7 @@ def airflow_model(t, y, t_max, input_values, control_register):
             "heating_rate_J_per_s": heating_rate,
             "CO2_release_rate_mol_per_s": CO2_release_rate,
             "airflow_m3_per_s": airflow,
-            "ambient_humidity_at_inside_temp_RH": ambient_humidity_at_inside_temp
+            "ambient_humidity_at_inside_temp_RH": ambient_humidity_at_inside_temp,     
         })
 
     return [
