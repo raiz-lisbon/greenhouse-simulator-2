@@ -105,8 +105,7 @@ def plot_multiline_dual_y(
     left_axis = alt.Chart(data_to_plot_one.tz_convert(None).reset_index().melt("timestamp"), title=title, width=width, height=height).mark_line().encode(
         alt.X('timestamp:T', axis=alt.Axis(format=date_format)),
         alt.Y("value", axis=alt.Axis(title=y_labels[0])),
-        alt.Color('variable', legend=alt.Legend(title=legend_label), scale=alt.Scale(domain=columns_1, range=colors_1) if colors else None)
-
+        alt.Color('variable', legend=alt.Legend(title=legend_label) if legend_label else None, scale=alt.Scale(domain=columns_1, range=colors_1) if colors else None),
     )
 
     if left_axis_target_range:
@@ -117,8 +116,7 @@ def plot_multiline_dual_y(
         right_axis = alt.Chart(data_to_plot_two.tz_convert(None).reset_index().melt("timestamp"), title=title, width=width, height=height).mark_line().encode(
             alt.X('timestamp:T', axis=alt.Axis(format=date_format)),
             alt.Y("value", axis=alt.Axis(title=y_labels[1])),
-            alt.Color('variable', legend=alt.Legend(title=legend_label), scale=alt.Scale(domain=columns_2, range=colors_2) if colors else None)
-
+            alt.Color('variable', legend=alt.Legend(title=legend_label) if legend_label else None, scale=alt.Scale(domain=columns_2, range=colors_2) if colors else None),
         )
 
         return alt.layer(left_axis, right_axis).resolve_scale(y='independent', color='independent')
@@ -146,8 +144,71 @@ def plot_stacked_area(df, columns, size=320, width=None, height=None, title="", 
         alt.Y("value", axis=alt.Axis(title=y_label)),
         alt.Color(
             'variable', 
-            legend=alt.Legend(title=legend_label),
-            scale=alt.Scale(domain=columns, range=colors) if colors else None
+            legend=alt.Legend(title=legend_label) if legend_label else None
+            # scale=alt.Scale(domain=columns, range=colors) if colors else None
         ),
         order=alt.Order('sum(variable)', sort='descending')
+    )
+
+
+def plot_in_grid(all_dfs, all_dfs_key,  chart_fn, col_count=2, row_count=2, **chart_kwargs):
+    dfs = all_dfs[all_dfs_key]
+    rows = []
+    for row_nr in range(row_count):
+        charts_of_row = []
+        for col_nr in range(col_count):
+            i = row_nr * col_count + col_nr
+            df_name = list(dfs.keys())[i]
+            df = dfs[df_name]
+            chart = chart_fn(df, title=df_name, show_label=i==col_count, **chart_kwargs)
+            charts_of_row.append(chart)
+        vconcat_chart = alt.vconcat(*charts_of_row).resolve_scale(color='independent')
+        rows.append(vconcat_chart)
+
+    hconcat_chart =  alt.hconcat(title=all_dfs_key, *rows).resolve_scale(color='independent')
+    hconcat_chart = hconcat_chart.configure_title(fontSize=14, offset=5, orient='top', anchor='middle')
+    return hconcat_chart
+
+
+def plot_humidity(df, title, show_label=False, width=400, height=235, is_long=False):
+    return plot_multiline_dual_y(
+        df.resample('D').mean() if is_long else df,
+        ["humidity", "ambient_humidity", "ambient_humidity_at_inside_temp_RH"],
+        ["dehum_rate_g_per_s"],
+        width=width, 
+        height=height, 
+        title=f"Humidity: {title}", 
+        y_labels=["RH %", "g / s"], 
+        legend_label=" " if show_label else None, 
+        date_format="",
+        colors=["blue", "lightgreen", "green", "orange"],
+        left_axis_target_range=[40,70],
+    )
+
+
+def plot_temperature(df, title, show_label=False, width=400, height=235, is_long=False):
+    return plot_multiline_dual_y(
+        df.resample('D').mean() if is_long else df,
+        ["temp", "ambient_temp"],
+        ["heating_rate_J_per_s"],
+        width=width, 
+        height=height, 
+        title=f"Temperature: {title}", 
+        y_labels=["C", "J / s"], 
+        legend_label=" " if show_label else None,
+        date_format="",
+        colors=["blue", "green", "orange"],
+        left_axis_target_range=[17,27]
+    )
+
+
+def plot_energy(df, title, show_label=False, width=400, height=235, is_long=False):
+    return plot_stacked_area(
+        df.resample('D').mean() if is_long else df, 
+        ["energy_used_by_fan_J", "energy_used_by_heating_J", "energy_used_by_dehum_J", "energy_used_by_lighting_J"], 
+        width=width,
+        height=height,
+        title=f"Energy usage: {title}",
+        y_label="Energy used (J)",
+        legend_label=" " if show_label else None,
     )
