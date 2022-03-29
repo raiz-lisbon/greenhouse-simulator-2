@@ -152,6 +152,8 @@ def plot_stacked_area(df, columns, size=320, width=None, height=None, title="", 
 
 
 def plot_in_grid(all_dfs, all_dfs_key,  chart_fn, col_count=2, row_count=2, **chart_kwargs):
+    assert all_dfs_key in all_dfs, f"'{all_dfs_key}' is not in executed simulation names. Check if it corresponds to one of the keys in `configs` dictionary above."
+
     dfs = all_dfs[all_dfs_key]
     rows = []
     for row_nr in range(row_count):
@@ -170,7 +172,7 @@ def plot_in_grid(all_dfs, all_dfs_key,  chart_fn, col_count=2, row_count=2, **ch
     return hconcat_chart
 
 
-def plot_humidity(df, title, show_label=False, width=400, height=235, is_long=False):
+def plot_humidity(df, title, show_label=False, width=400, height=200, is_long=False):
     return plot_multiline_dual_y(
         df.resample('D').mean() if is_long else df,
         ["humidity", "ambient_humidity", "ambient_humidity_at_inside_temp_RH"],
@@ -186,7 +188,7 @@ def plot_humidity(df, title, show_label=False, width=400, height=235, is_long=Fa
     )
 
 
-def plot_temperature(df, title, show_label=False, width=400, height=235, is_long=False):
+def plot_temperature(df, title, show_label=False, width=400, height=200, is_long=False):
     return plot_multiline_dual_y(
         df.resample('D').mean() if is_long else df,
         ["temp", "ambient_temp"],
@@ -202,7 +204,7 @@ def plot_temperature(df, title, show_label=False, width=400, height=235, is_long
     )
 
 
-def plot_energy(df, title, show_label=False, width=400, height=235, is_long=False):
+def plot_energy(df, title, show_label=False, width=400, height=200, is_long=False):
     return plot_stacked_area(
         df.resample('D').mean() if is_long else df, 
         ["energy_used_by_fan_J", "energy_used_by_heating_J", "energy_used_by_dehum_J", "energy_used_by_lighting_J"], 

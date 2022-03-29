@@ -28,4 +28,8 @@ def get_total_cost(df, greenhouse):
         # Energy generated
         total_energy_generated: kWh = df['total_energy_generated_kWh'].sum()
 
-        return round((J_to_kWh(total_energy) - total_energy_generated) * electricity_cost, 2)
+        total_cost: EUR = (J_to_kWh(total_energy) - total_energy_generated) * electricity_cost
+        total_yield: kg = df['harvested_weight_g'].sum() / 1000
+        total_harvested_plant_count = df["harvested_plant_count"].sum()
+        
+        return total_cost, total_yield, total_harvested_plant_count

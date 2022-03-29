@@ -16,32 +16,53 @@ air_density: kg_per_m3 = 1.1839 # TODO: take humidity into account with psychrol
 water_evaporation_heat: J_per_g = 2501
 
 
-def get_airflow(airflow_mode, rel_humidity: RH, ambient_humidity_at_inside_temp: RH, temp: C, ambient_data, control_register, prev_airflows_at_t_steps) -> m3_per_s:
+def get_airflow(
+        airflow_mode, 
+        rel_humidity: RH, 
+        ambient_humidity_at_inside_temp: RH, 
+        temp: C, 
+        ambient_data, 
+        control_register, 
+        prev_airflows_at_t_steps,
+        control_config
+    ) -> m3_per_s:
+
     if ":" in airflow_mode:
         assert airflow_mode.split(":")[0] == "CONST" and float(airflow_mode.split(":")[1]) >= 0, f"CONST airflow mode '{airflow_mode} is not valid."
     else:
-        assert airflow_mode in ["humidity_control"], f"Airflow mode '{airflow_mode} is not supported."
+        assert airflow_mode in ["humidity_control", "light_control"], f"Airflow mode '{airflow_mode} is not supported."
 
     airflow_offset: m3_per_s = 0
 
     if airflow_mode == "humidity_control":
         hum_airflow: m3_per_s = abs(rel_humidity - 70) * 1
         airflow_offset = hum_airflow
+    elif airflow_mode == "light_control":
+        airflow_offset = 0.5 if control_config["is_light"] else 0.05
     elif "CONST" in airflow_mode:
         airflow_offset = float(airflow_mode.split(":")[1])
 
     if airflow_offset < 0:
         airflow_offset = 0
 
-    if airflow_offset > 1.95:
-        airflow_offset = 1.95
+    if airflow_offset > 2:
+        airflow_offset = 2
 
     new_airflow = 0 + airflow_offset
 
     return new_airflow
 
 
-def derive_H2O(airflow: m3_per_s, humidity_ratio: kg_H2O_per_kg_air, ambient_humidity_ratio: kg_H2O_per_kg_air, humidity: RH, temp: C, input_values) -> RH_per_s:
+def derive_H2O(
+        airflow: m3_per_s, 
+        humidity_ratio: kg_H2O_per_kg_air, 
+        ambient_humidity_ratio: kg_H2O_per_kg_air, 
+        humidity: RH, 
+        temp: C, 
+        input_values,
+        control_config
+    ) -> RH_per_s:
+
     # Unpack input values
     H2O_mass_evaporation_rate: g_per_s = input_values["H2O_mass_evaporation_rate"]
     structure_volume: m3 = input_values["structure_volume"]
@@ -49,8 +70,9 @@ def derive_H2O(airflow: m3_per_s, humidity_ratio: kg_H2O_per_kg_air, ambient_hum
     # Get mass air inflow
     mass_airflow: kg_per_s = air_density * airflow
 
-    if humidity > 70:
-        dehum_rate = (humidity - 70) * 0.2
+    max_humidity = control_config["max_humidity"]
+    if humidity > max_humidity:
+        dehum_rate = (humidity - max_humidity) * 0.2
     else:
         dehum_rate = 0
 
@@ -63,7 +85,26 @@ def derive_H2O(airflow: m3_per_s, humidity_ratio: kg_H2O_per_kg_air, ambient_hum
     return humidity_ratio_change_rate, dehum_rate
 
 
-def derive_temp(airflow: m3_per_s, humidity: RH, temp: C, input_values, dehum_rate: g_per_s, heating_rate: J_per_s) -> C_per_s:
+def derive_temp(airflow: m3_per_s, humidity: RH, ambient_humidity_at_inside_temp: RH, temp: C, input_values, dehum_rate: g_per_s, control_config) -> C_per_s:
+    min_temp = control_config["min_temp"]
+    max_temp = control_config["max_temp"]
+
+    RH_diff: RH = control_config["max_humidity"] - ambient_humidity_at_inside_temp
+    if RH_diff < 0:
+        RH_diff = 0
+
+    target_temp: C = max_temp
+    if control_config["temp_mode"] == "dynamic":
+        target_temp -= RH_diff
+    
+    if target_temp < min_temp:
+        target_temp = min_temp
+
+    if temp > target_temp:
+        heating_rate: J_per_s = (temp - max_temp) * -2300
+    else:
+        heating_rate: J_per_s = (target_temp - temp) * 2000
+
     # Unpack input values
     ambient_temp = input_values["ambient_data"]["temp"]
     ambient_humidity = input_values["ambient_data"]["humidity"]
@@ -116,7 +157,7 @@ def derive_CO2(airflow, CO2_concentration: ppm, input_values):
     return net_change_concentration, CO2_release_rate
 
 
-def airflow_model(t, y, t_max, input_values, control_register, prev_airflows_at_t_steps, airflow_mode, max_temp):
+def airflow_model(t, y, t_max, input_values, control_register, prev_airflows_at_t_steps, control_config):
     # Destructure y values (== measured variables)
     humidity_ratio, temp, CO2_concentration = y
 
@@ -132,20 +173,12 @@ def airflow_model(t, y, t_max, input_values, control_register, prev_airflows_at_
         print("Temp over limit", temp)
         temp = 200
 
-
     humidity = psychrolib.GetRelHumFromHumRatio(temp, humidity_ratio, pressure) * 100
 
     # To avoid psychrolib errors
     if humidity > 100:
         print("Humidity over limit", humidity)
         humidity = 100
-
-    # Define control signals
-    if temp > max_temp:
-        heating_rate: J_per_s = (temp - max_temp) * -2300
-    else:
-        heating_rate: J_per_s = (max_temp - temp) * 2000
-
 
     # Get ambient humidity ratio and rel humidity at inside temp
     ambient_temp: C = input_values["ambient_data"]["temp"]
@@ -154,11 +187,38 @@ def airflow_model(t, y, t_max, input_values, control_register, prev_airflows_at_
     ambient_humidity_at_inside_temp: RH = psychrolib.GetRelHumFromHumRatio(temp, ambient_humidity_ratio, pressure) * 100
 
     # Determine airflow
-    airflow = get_airflow(airflow_mode, humidity, ambient_humidity_at_inside_temp, temp, input_values["ambient_data"], control_register, prev_airflows_at_t_steps)
+    airflow = get_airflow(
+        control_config["airflow_mode"], 
+        humidity, 
+        ambient_humidity_at_inside_temp, 
+        temp, 
+        input_values["ambient_data"], 
+        control_register, 
+        prev_airflows_at_t_steps,
+        control_config
+    )
 
     # Calculate change rate of measured variables
-    humidity_ratio_change_rate, dehum_rate = derive_H2O(airflow, humidity_ratio, ambient_humidity_ratio, humidity, temp, input_values)
-    temp_change_rate, heating_rate = derive_temp(airflow, humidity, temp, input_values, dehum_rate, heating_rate)
+    humidity_ratio_change_rate, dehum_rate = derive_H2O(
+        airflow, 
+        humidity_ratio, 
+        ambient_humidity_ratio, 
+        humidity, 
+        temp, 
+        input_values,
+        control_config
+    )
+
+    temp_change_rate, heating_rate = derive_temp(
+        airflow, 
+        humidity,
+        ambient_humidity_at_inside_temp,
+        temp, 
+        input_values, 
+        dehum_rate, 
+        control_config
+    )
+
     CO2_concentration_change_rate, CO2_release_rate = derive_CO2(airflow, CO2_concentration, input_values)
 
     # Avoid duplicates to ensure strictly monotonically increasing list as it is a requirement of InterpolatedUnivariateSpline

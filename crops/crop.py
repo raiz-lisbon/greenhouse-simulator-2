@@ -55,9 +55,9 @@ class Crop:
         H20_evaporation_rate, H2O_evaporated = self._get_H2O_evaporated(dli)
 
         # Harvest plants that are over their `growth_period`
-        self._harvest()
+        harvested_weight, harvested_plant_count = self._harvest()
 
-        return CO2_assimilation_rate, CO2_assimilated, H20_evaporation_rate, H2O_evaporated
+        return harvested_weight, harvested_plant_count, CO2_assimilation_rate, CO2_assimilated, H20_evaporation_rate, H2O_evaporated
 
 
     def _get_CO2_assimilated(self, dli: mol_per_m2_day):
@@ -149,7 +149,8 @@ class Crop:
         plants_to_harvest = self.hours_after_transplant >= (self.grow_period * 24)
 
         # Sum their weight and add it to harvest accumulator
-        self.harvested_weight += (self.weights[-1][plants_to_harvest].sum() * self.barrel_count)
+        harvested_weight: g = self.weights[-1][plants_to_harvest].sum() * self.barrel_count
+        self.harvested_weight += harvested_weight
 
         # Initialize new plants in the place of the harvested ones (==transplant seedlings)
         self.weights[-1][plants_to_harvest] = self.initial_weight
@@ -157,6 +158,10 @@ class Crop:
 
         # Start over counting `hours_after_transplant` if any plant goes over `grow_period` (== being harvested)
         self.hours_after_transplant = self.hours_after_transplant % (self.grow_period * 24)
+
+        harvested_count = len([p for p in plants_to_harvest if p]) * self.barrel_count
+
+        return harvested_weight, harvested_count
 
 
     def _get_final_plant_props(self, dli: mol_per_m2_day) -> g:
